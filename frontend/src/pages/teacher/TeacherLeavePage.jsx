@@ -1,133 +1,78 @@
-// src/pages/teacher/TeacherLeavePage.jsx
-import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { attendanceApi } from "../../api/attendanceApi";
 
 export default function TeacherLeavePage() {
-  const { classId } = useParams(); // route: /teacher/classes/:classId/leave
+  const { classId } = useParams();
+  const location = useLocation();
+  const classInfo = location.state?.classInfo;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-
   const [leaves, setLeaves] = useState([]);
 
-  const loadLeaves = async () => {
-    try {
-      setLoading(true);
-      setError("");
-      setMsg("");
+  const title = useMemo(() => {
+    if (classInfo?.subjectName && classInfo?.subjectCode) return `${classInfo.subjectName} - ${classInfo.subjectCode}`;
+    return `Class: ${classId}`;
+  }, [classInfo, classId]);
 
-      // ✅ cần attendanceApi.getLeaveRequestsByClass(...)
+  async function load() {
+    setLoading(true);
+    setError("");
+    setMsg("");
+    try {
       const res = await attendanceApi.getLeaveRequestsByClass(classId, "PENDING");
-      setLeaves(res.data || []);
+      setLeaves(Array.isArray(res?.data) ? res.data : []);
     } catch (e) {
-      setError(e?.response?.data?.message || e.message);
+      setError(e?.response?.data?.message || e?.message || "Network Error");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
-    if (!classId) {
-      setLoading(false);
-      setError("Thiếu classId trên URL. Hãy vào từ /teacher/classes.");
-      return;
-    }
-    loadLeaves();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!classId) return;
+    load();
   }, [classId]);
 
-  const onApprove = async (leaveId) => {
+  async function approve(id) {
+    setError("");
+    setMsg("");
     try {
-      setMsg("");
-      await attendanceApi.approveLeave(leaveId);
+      await attendanceApi.approveLeave(id);
       setMsg("Duyệt đơn thành công.");
-      await loadLeaves();
+      await load();
     } catch (e) {
-      setMsg(e?.response?.data?.message || e.message);
+      setError(e?.response?.data?.message || e?.message || "Approve failed");
     }
-  };
+  }
 
   return (
-    <div style={{ padding: 24, maxWidth: 980 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <h2 style={{ margin: 0 }}>Duyệt xin vắng</h2>
-          <div style={{ opacity: 0.85, marginTop: 6 }}>
-            Lớp: <b>{classId}</b> — chỉ hiển thị đơn <b>PENDING</b>
-          </div>
-        </div>
+    <div style={page}>
+      <Link to="/teacher/classes" style={backLink}>← Quay lại Classes</Link>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button
-            onClick={loadLeaves}
-            style={{ padding: "10px 14px", borderRadius: 10 }}
-          >
-            Refresh
-          </button>
-          <Link to="/teacher/classes" style={{ alignSelf: "center" }}>
-            Back Classes
-          </Link>
-        </div>
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontWeight: 900, fontSize: 18 }}>Duyệt xin vắng — {title}</div>
+        <div style={{ marginTop: 6, color: "#bbb" }}>Chỉ hiển thị đơn PENDING.</div>
       </div>
 
-      {msg && (
-        <div
-          style={{
-            marginTop: 14,
-            padding: 12,
-            borderRadius: 12,
-            border: "1px solid #333",
-            background: "#111",
-          }}
-        >
-          {msg}
-        </div>
-      )}
+      {msg ? <div style={toastOk}>{msg}</div> : null}
+      {error ? <div style={toastErr}>Lỗi: {error}</div> : null}
 
-      <div style={{ marginTop: 16 }}>
+      <div style={{ marginTop: 14 }}>
         {loading ? (
-          <div>Đang tải...</div>
-        ) : error ? (
-          <div>Lỗi: {error}</div>
+          <div style={{ color: "#bbb" }}>Đang tải...</div>
         ) : leaves.length === 0 ? (
-          <div>Không có đơn xin vắng PENDING.</div>
+          <div style={{ color: "#bbb" }}>Không có đơn xin vắng.</div>
         ) : (
-          <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 12 }}>
             {leaves.map((lv) => (
-              <div
-                key={lv._id}
-                style={{
-                  border: "1px solid #333",
-                  borderRadius: 12,
-                  padding: 14,
-                  background: "#111",
-                }}
-              >
-                <div style={{ fontWeight: 800 }}>
-                  Student: {lv.studentId} — Status: {lv.status}
-                </div>
-
-                <div style={{ opacity: 0.9, marginTop: 8 }}>
-                  Lý do: <span style={{ fontWeight: 600 }}>{lv.reason}</span>
-                </div>
-
-                {lv.sessionId && (
-                  <div style={{ opacity: 0.85, marginTop: 8 }}>
-                    Session: <b>{lv.sessionId.lesson}</b> —{" "}
-                    {new Date(lv.sessionId.startTime).toLocaleString()}
-                  </div>
-                )}
-
-                <div style={{ marginTop: 10 }}>
-                  <button
-                    onClick={() => onApprove(lv._id)}
-                    style={{ padding: "10px 14px", borderRadius: 10 }}
-                  >
-                    Approve
-                  </button>
-                </div>
+              <div key={lv._id} style={card}>
+                <div style={{ fontWeight: 900 }}>Student: {lv.studentId} — Status: {lv.status}</div>
+                <div style={{ marginTop: 10, color: "#ddd" }}>Session: {lv.sessionId}</div>
+                <div style={{ marginTop: 10, color: "#ddd" }}>Lý do: <b>{lv.reason}</b></div>
+                <button type="button" style={btnPrimary} onClick={() => approve(lv._id)}>Approve</button>
               </div>
             ))}
           </div>
@@ -136,3 +81,13 @@ export default function TeacherLeavePage() {
     </div>
   );
 }
+
+const page = { minHeight: "100vh", background: "#222", color: "#eee", padding: 18 };
+const backLink = { color: "#6ea8ff", textDecoration: "none", fontWeight: 800 };
+
+const card = { border: "1px solid rgba(255,255,255,0.10)", borderRadius: 14, padding: 14, background: "#1b1b1b" };
+
+const btnPrimary = { marginTop: 12, padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,.12)", background: "#111", color: "#fff", cursor: "pointer", fontWeight: 900 };
+
+const toastOk = { marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(120,255,120,.25)", background: "rgba(0,255,0,.06)", color: "#c9ffcf", fontWeight: 800 };
+const toastErr = { marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,120,120,.35)", background: "rgba(255,0,0,.06)", color: "#ffb3b3", fontWeight: 800 };

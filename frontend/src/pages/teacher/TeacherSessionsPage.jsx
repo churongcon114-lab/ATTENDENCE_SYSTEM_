@@ -1,239 +1,247 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-
-const sessionKey = (classId) => `attendance_active_session_${classId}`;
-const checkinsKey = (classId) => `attendance_checkins_${classId}`;
-
-function generateCode(len = 6) {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
-}
-function fmtTime(ts) {
-  const d = new Date(ts);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
-}
-function safeLoad(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-}
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
+import { attendanceApi } from "../../api/attendanceApi";
 
 export default function TeacherSessionsPage() {
   const { classId } = useParams();
-  const nav = useNavigate();
   const location = useLocation();
   const classInfo = location.state?.classInfo;
 
-  // Load session/checkins từ localStorage để teacher/student trùng nhau
-  const [session, setSession] = useState(() => safeLoad(sessionKey(classId), null));
-  const [checkins, setCheckins] = useState(() => safeLoad(checkinsKey(classId), []));
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
 
   const [durationMin, setDurationMin] = useState(10);
+  const [active, setActive] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [attendees, setAttendees] = useState([]);
+
+  const timerRef = useRef(null);
   const [now, setNow] = useState(Date.now());
 
-  // Sync localStorage
-  useEffect(() => {
-    localStorage.setItem(sessionKey(classId), JSON.stringify(session));
-  }, [classId, session]);
+  const title = useMemo(() => {
+    if (classInfo?.subjectName && classInfo?.subjectCode) return `${classInfo.subjectName} - ${classInfo.subjectCode}`;
+    return `Class: ${classId}`;
+  }, [classInfo, classId]);
 
-  useEffect(() => {
-    localStorage.setItem(checkinsKey(classId), JSON.stringify(checkins));
-  }, [classId, checkins]);
+  async function load() {
+    setLoading(true);
+    setError("");
+    setMsg("");
+    try {
+      const rActive = await attendanceApi.getActiveSessionByClass(classId);
+      setActive(rActive?.data || null);
 
-  // Tick timer nếu đang mở
-  useEffect(() => {
-    if (!session?.isRunning) return;
-    const t = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(t);
-  }, [session?.isRunning]);
+      const rList = await attendanceApi.getSessionsByClass(classId);
+      const list = Array.isArray(rList?.data) ? rList.data : [];
+      setSessions(list);
 
-  // Auto stop nếu hết giờ
-  useEffect(() => {
-    if (!session?.isRunning) return;
-    if (session.endAt && now >= session.endAt) {
-      setSession((s) => (s ? { ...s, isRunning: false } : s));
+      const act = rActive?.data;
+      if (act?._id) {
+        const rAtt = await attendanceApi.getSessionAttendees(act._id);
+        setAttendees(Array.isArray(rAtt?.data) ? rAtt.data : []);
+      } else {
+        setAttendees([]);
+      }
+    } catch (e) {
+      setError(e?.response?.data?.message || e?.message || "Network Error");
+    } finally {
+      setLoading(false);
     }
-  }, [now, session]);
+  }
 
-  const remainingMs = useMemo(() => {
-    if (!session?.isRunning || !session?.endAt) return 0;
-    return Math.max(0, session.endAt - now);
-  }, [session, now]);
+  useEffect(() => {
+    load();
+  }, [classId]);
+
+  // tick timer for remaining
+  useEffect(() => {
+    timerRef.current = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timerRef.current);
+  }, []);
 
   const remainingText = useMemo(() => {
-    const s = Math.floor(remainingMs / 1000);
-    const mm = Math.floor(s / 60);
+    if (!active || active.status !== "OPEN") return "Không có phiên mở";
+    const ms = active.endTime - now;
+    if (ms <= 0) return "Hết giờ (đang tự đóng)";
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
     const ss = s % 60;
-    return `${mm}m ${String(ss).padStart(2, "0")}s`;
-  }, [remainingMs]);
+    return `Còn ${m}m ${ss}s`;
+  }, [active, now]);
 
-  function startSession() {
-    const code = generateCode(6);
-    const startAt = Date.now();
-    const endAt = startAt + Number(durationMin) * 60 * 1000;
-
-    setSession({
-      classId,
-      code,
-      startAt,
-      endAt,
-      isRunning: true,
-    });
-
-    // phiên mới -> reset checkins
-    setCheckins([]);
+  async function startSession() {
+    setError("");
+    setMsg("");
+    try {
+      const res = await attendanceApi.createSession({
+        classId,
+        durationMin: Number(durationMin),
+      });
+      setMsg("Đã mở phiên điểm danh.");
+      setActive(res?.data || null);
+      await load();
+    } catch (e) {
+      setError(e?.response?.data?.message || e?.message || "Create session failed");
+    }
   }
 
-  function stopSession() {
-    setSession((s) => (s ? { ...s, isRunning: false } : s));
+  async function stopSession() {
+    if (!active?._id) return;
+    setError("");
+    setMsg("");
+    try {
+      await attendanceApi.closeSession(active._id);
+      setMsg("Đã đóng phiên.");
+      await load();
+    } catch (e) {
+      setError(e?.response?.data?.message || e?.message || "Close session failed");
+    }
   }
 
-  function clearSession() {
-    if (!confirm("Xóa phiên điểm danh hiện tại?")) return;
-    setSession(null);
+  async function refreshAttendees() {
+    if (!active?._id) return;
+    try {
+      const r = await attendanceApi.getSessionAttendees(active._id);
+      setAttendees(Array.isArray(r?.data) ? r.data : []);
+    } catch {}
   }
+
+  useEffect(() => {
+    refreshAttendees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?._id]);
 
   return (
-    <div style={{ padding: 20, maxWidth: 980, margin: "0 auto" }}>
-      <button
-        type="button"
-        onClick={() => nav("/teacher/classes")}
-        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd", background: "#fff" }}
-      >
-        ← Quay lại
-      </button>
+    <div style={page}>
+      <Link to="/teacher/classes" style={backLink}>← Quay lại Classes</Link>
 
-      <div style={{ marginTop: 12 }}>
-        <h1 style={{ marginBottom: 6 }}>Quản lý buổi điểm danh</h1>
-        <div style={{ color: "#555" }}>
-          Lớp:{" "}
-          <b>
-            {classInfo ? `${classInfo.subjectName} - ${classInfo.subjectCode}` : `ClassId: ${classId}`}
-          </b>
-        </div>
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontWeight: 900, fontSize: 22 }}>Quản lý buổi điểm danh</div>
+        <div style={{ marginTop: 6, color: "#bbb" }}>Lớp: <b>{title}</b></div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 12, marginTop: 16 }}>
-        {/* Control */}
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, background: "#fff", padding: 14 }}>
-          <div style={{ fontWeight: 800, fontSize: 16 }}>Mở điểm danh</div>
+      {error ? <div style={toastErr}>Lỗi: {error}</div> : null}
+      {msg ? <div style={toastOk}>{msg}</div> : null}
 
-          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <label style={{ fontWeight: 600 }}>Thời lượng (phút):</label>
+      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14 }}>
+        <div style={card}>
+          <div style={{ fontWeight: 900 }}>Mở điểm danh</div>
+
+          <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ color: "#aaa" }}>Thời lượng (phút):</div>
             <input
-              type="number"
-              min={1}
-              max={180}
               value={durationMin}
               onChange={(e) => setDurationMin(e.target.value)}
-              style={{ width: 120, padding: 8, borderRadius: 8, border: "1px solid #ccc" }}
-              disabled={session?.isRunning}
+              style={{ ...input, width: 90 }}
+              type="number"
+              min={1}
             />
-
-            {!session?.isRunning ? (
-              <button
-                type="button"
-                onClick={startSession}
-                style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff" }}
-              >
-                Tạo mã & Bắt đầu
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={stopSession}
-                style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #f3c2c2", background: "#fff5f5", color: "#b00020" }}
-              >
-                Dừng
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={clearSession}
-              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff" }}
-            >
-              Xóa phiên
+            <button type="button" style={btnPrimary} onClick={startSession} disabled={loading}>
+              Mở điểm danh
             </button>
+            <button type="button" style={btnGhost} onClick={stopSession} disabled={!active || active.status !== "OPEN"}>
+              Dừng
+            </button>
+            <button type="button" style={btn} onClick={load}>Refresh</button>
           </div>
 
-          <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#fafafa", border: "1px dashed #ccc" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ marginTop: 14, padding: 12, borderRadius: 12, border: "1px dashed rgba(255,255,255,.18)", background: "rgba(255,255,255,.03)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <div style={{ color: "#666", fontSize: 13 }}>Mã điểm danh</div>
-                <div style={{ fontWeight: 900, fontSize: 28, letterSpacing: 2 }}>
-                  {session?.code || "------"}
+                <div style={{ color: "#aaa", fontSize: 12 }}>Mã điểm danh</div>
+                <div style={{ marginTop: 6, fontWeight: 900, fontSize: 24, letterSpacing: 2 }}>
+                  {active?.status === "OPEN" ? active.attendanceCode : "—"}
                 </div>
               </div>
-
               <div>
-                <div style={{ color: "#666", fontSize: 13 }}>Trạng thái</div>
-                <div style={{ fontWeight: 800 }}>
-                  {session?.isRunning ? `Đang mở • Còn ${remainingText}` : "Chưa mở / Đã dừng / Hết hạn"}
+                <div style={{ color: "#aaa", fontSize: 12 }}>Trạng thái</div>
+                <div style={{ marginTop: 6, fontWeight: 900 }}>
+                  {active?.status === "OPEN" ? `Đang mở • ${remainingText}` : "Không có phiên mở"}
                 </div>
-                <div style={{ color: "#777", marginTop: 4 }}>
-                  Bắt đầu: {session?.startAt ? fmtTime(session.startAt) : "--:--:--"} • Kết thúc:{" "}
-                  {session?.endAt ? fmtTime(session.endAt) : "--:--:--"}
-                </div>
+                {active ? (
+                  <div style={{ marginTop: 6, color: "#bbb", fontSize: 12 }}>
+                    Bắt đầu: {new Date(active.startTime).toLocaleTimeString()} • Kết thúc: {new Date(active.endTime).toLocaleTimeString()}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Quick stats */}
-        <div style={{ border: "1px solid #ddd", borderRadius: 12, background: "#fff", padding: 14 }}>
-          <div style={{ fontWeight: 800, fontSize: 16 }}>Đã điểm danh</div>
-          <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900 }}>{checkins.length}</div>
-          <div style={{ color: "#666" }}>Sinh viên</div>
-        </div>
-      </div>
-
-      {/* Checkins list */}
-      <div style={{ marginTop: 14, border: "1px solid #ddd", borderRadius: 12, background: "#fff", padding: 14 }}>
-        <div style={{ fontWeight: 800, fontSize: 16 }}>Danh sách sinh viên đã điểm danh</div>
-
-        {checkins.length === 0 ? (
-          <div style={{ marginTop: 10, color: "#777" }}>Chưa có sinh viên nào điểm danh.</div>
-        ) : (
-          <div style={{ marginTop: 10, overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={th}>#</th>
-                  <th style={th}>MSSV</th>
-                  <th style={th}>Họ tên</th>
-                  <th style={th}>Thời gian</th>
-                </tr>
-              </thead>
-              <tbody>
-                {checkins
-                  .slice()
-                  .sort((a, b) => a.checkedAt - b.checkedAt)
-                  .map((s, idx) => (
-                    <tr key={s.studentId}>
-                      <td style={td}>{idx + 1}</td>
-                      <td style={td}>{s.studentId}</td>
-                      <td style={td}>{s.studentName}</td>
-                      <td style={td}>{fmtTime(s.checkedAt)}</td>
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 900 }}>Danh sách sinh viên đã điểm danh</div>
+            {attendees.length === 0 ? (
+              <div style={{ marginTop: 8, color: "#bbb" }}>Chưa có sinh viên nào điểm danh.</div>
+            ) : (
+              <div style={{ marginTop: 8, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>#</th>
+                      <th style={th}>StudentId</th>
+                      <th style={th}>Thời gian</th>
+                      <th style={th}>Trạng thái</th>
                     </tr>
-                  ))}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {attendees.map((a, i) => (
+                      <tr key={a._id || i}>
+                        <td style={td}>{i + 1}</td>
+                        <td style={td}>{a.studentId}</td>
+                        <td style={td}>{new Date(a.checkedAt).toLocaleString()}</td>
+                        <td style={td}>{a.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <button type="button" style={{ ...btn, marginTop: 10 }} onClick={refreshAttendees} disabled={!active || active.status !== "OPEN"}>
+              Reload danh sách
+            </button>
           </div>
-        )}
+        </div>
+
+        <div style={card}>
+          <div style={{ fontWeight: 900 }}>Danh sách phiên (sessions)</div>
+          {loading ? (
+            <div style={{ marginTop: 10, color: "#bbb" }}>Đang tải...</div>
+          ) : sessions.length === 0 ? (
+            <div style={{ marginTop: 10, color: "#bbb" }}>Chưa có phiên nào.</div>
+          ) : (
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              {sessions.map((s) => (
+                <div key={s._id} style={item}>
+                  <div style={{ fontWeight: 900 }}>
+                    {s.lesson || s._id} — <span style={{ color: "#cfd8ff" }}>{s.status}</span>
+                  </div>
+                  <div style={{ marginTop: 6, color: "#bbb", fontSize: 12 }}>
+                    Code: <b>{s.attendanceCode}</b> • {new Date(s.startTime).toLocaleString()} → {new Date(s.endTime).toLocaleString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-const th = { textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #eee", color: "#555", fontWeight: 700, fontSize: 13 };
-const td = { padding: "10px 8px", borderBottom: "1px solid #f0f0f0" };
+const page = { minHeight: "100vh", background: "#222", color: "#eee", padding: 18 };
+const backLink = { color: "#6ea8ff", textDecoration: "none", fontWeight: 800 };
+
+const card = { background: "#1b1b1b", border: "1px solid rgba(255,255,255,.08)", borderRadius: 12, padding: 14, boxShadow: "0 10px 30px rgba(0,0,0,0.25)" };
+const input = { padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,.12)", background: "#111", color: "#fff", fontWeight: 800 };
+
+const btn = { padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.12)", background: "#2a2a2a", color: "#fff", cursor: "pointer", fontWeight: 800 };
+const btnPrimary = { ...btn, background: "#111", fontWeight: 900 };
+const btnGhost = { ...btn, background: "#2a2a2a", fontWeight: 900 };
+
+const toastErr = { marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,120,120,.35)", background: "rgba(255,0,0,.06)", color: "#ffb3b3", fontWeight: 800 };
+const toastOk = { marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(120,255,120,.25)", background: "rgba(0,255,0,.06)", color: "#c9ffcf", fontWeight: 800 };
+
+const item = { padding: 12, borderRadius: 10, border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,0.03)" };
+const th = { textAlign: "left", padding: 10, borderBottom: "1px solid rgba(255,255,255,0.10)", color: "#bbb" };
+const td = { padding: 10, borderBottom: "1px solid rgba(255,255,255,0.06)" };

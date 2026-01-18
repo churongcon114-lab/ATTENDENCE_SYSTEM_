@@ -1,4 +1,3 @@
-// src/App.jsx
 import { Routes, Route, Navigate } from "react-router-dom";
 
 import LoginPage from "./pages/LoginPage.jsx";
@@ -8,20 +7,19 @@ import ResetPasswordPage from "./pages/ResetPasswordPage.jsx";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 
-// Student pages
+// Student
 import StudentClassesPage from "./pages/student/StudentClassesPage.jsx";
-import ClassSessionsPage from "./pages/student/ClassSessionsPage.jsx";
 import StudentLeavePage from "./pages/student/StudentLeavePage.jsx";
+import ClassSessionsPage from "./pages/student/ClassSessionsPage.jsx";
 
-// Teacher pages
+// Teacher
 import TeacherClassesPage from "./pages/teacher/TeacherClassesPage.jsx";
-import TeacherSessionsPage from "./pages/teacher/TeacherSessionsPage.jsx";
 import TeacherLeavePage from "./pages/teacher/TeacherLeavePage.jsx";
+import TeacherSessionsPage from "./pages/teacher/TeacherSessionsPage.jsx";
 
 export default function App() {
   return (
     <Routes>
-      {/* ===================== PUBLIC ===================== */}
       <Route path="/" element={<Navigate to="/login" replace />} />
 
       <Route path="/login" element={<LoginPage />} />
@@ -29,7 +27,7 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-      {/* ===================== STUDENT ===================== */}
+      {/* STUDENT */}
       <Route
         path="/student/classes"
         element={
@@ -38,7 +36,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
       <Route
         path="/student/classes/:classId/sessions"
         element={
@@ -47,7 +44,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
       <Route
         path="/student/classes/:classId/leave"
         element={
@@ -56,8 +52,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
-      {/* Route cũ (fallback) */}
       <Route
         path="/student/leave"
         element={
@@ -67,7 +61,7 @@ export default function App() {
         }
       />
 
-      {/* ===================== TEACHER ===================== */}
+      {/* TEACHER */}
       <Route
         path="/teacher/classes"
         element={
@@ -76,7 +70,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
       <Route
         path="/teacher/classes/:classId/sessions"
         element={
@@ -85,7 +78,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
       <Route
         path="/teacher/classes/:classId/leave"
         element={
@@ -94,8 +86,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-
-      {/* Route cũ (fallback) */}
       <Route
         path="/teacher/leave"
         element={
@@ -105,7 +95,6 @@ export default function App() {
         }
       />
 
-      {/* ===================== 404 ===================== */}
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );

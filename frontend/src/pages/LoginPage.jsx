@@ -23,7 +23,8 @@ export default function LoginPage() {
         return;
       }
 
-      const role = res.user.role;
+      const role = String(res?.user?.role || "").toLowerCase();
+
       nav(role === "teacher" ? "/teacher/classes" : "/student/classes");
     } catch (err) {
       console.error(err);

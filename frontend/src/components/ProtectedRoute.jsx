@@ -1,15 +1,26 @@
 // src/components/ProtectedRoute.jsx
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { getCurrentUser } from "../utils/auth.js";
 
-export default function ProtectedRoute({ children, role }) {
-  const user = getCurrentUser();
+export default function ProtectedRoute({ role, children }) {
+  const loc = useLocation();
 
-  if (!user) return <Navigate to="/login" replace />;
+  // Ưu tiên session của auth.js
+  const session = getCurrentUser();
 
-  if (role && user.role !== role) {
-    // nếu sai role thì đá về đúng trang theo role
-    return <Navigate to={user.role === "teacher" ? "/teacher/classes" : "/student/classes"} replace />;
+  // Fallback theo localStorage kiểu demo
+  const token = localStorage.getItem("token");
+  const lsRole = (localStorage.getItem("role") || "").toLowerCase();
+
+  const currentRole = (session?.role || lsRole || "").toLowerCase();
+  const isAuthed = !!session || !!token;
+
+  if (!isAuthed) {
+    return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  }
+
+  if (role && currentRole && currentRole !== role.toLowerCase()) {
+    return <Navigate to="/login" replace />;
   }
 
   return children;

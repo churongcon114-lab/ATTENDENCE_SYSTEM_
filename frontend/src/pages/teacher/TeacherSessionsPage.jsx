@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+const sessionKey = (classId) => `attendance_active_session_${classId}`;
+const checkinsKey = (classId) => `attendance_checkins_${classId}`;
+
 function generateCode(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -14,6 +17,15 @@ function fmtTime(ts) {
   const ss = String(d.getSeconds()).padStart(2, "0");
   return `${hh}:${mm}:${ss}`;
 }
+function safeLoad(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
 
 export default function TeacherSessionsPage() {
   const { classId } = useParams();
@@ -21,30 +33,41 @@ export default function TeacherSessionsPage() {
   const location = useLocation();
   const classInfo = location.state?.classInfo;
 
+  // Load session/checkins từ localStorage để teacher/student trùng nhau
+  const [session, setSession] = useState(() => safeLoad(sessionKey(classId), null));
+  const [checkins, setCheckins] = useState(() => safeLoad(checkinsKey(classId), []));
+
   const [durationMin, setDurationMin] = useState(10);
-  const [isRunning, setIsRunning] = useState(false);
-  const [attendanceCode, setAttendanceCode] = useState("");
-  const [startAt, setStartAt] = useState(null);
-  const [endAt, setEndAt] = useState(null);
   const [now, setNow] = useState(Date.now());
 
-  const [checked, setChecked] = useState([]);
+  // Sync localStorage
+  useEffect(() => {
+    localStorage.setItem(sessionKey(classId), JSON.stringify(session));
+  }, [classId, session]);
 
   useEffect(() => {
-    if (!isRunning) return;
+    localStorage.setItem(checkinsKey(classId), JSON.stringify(checkins));
+  }, [classId, checkins]);
+
+  // Tick timer nếu đang mở
+  useEffect(() => {
+    if (!session?.isRunning) return;
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
-  }, [isRunning]);
+  }, [session?.isRunning]);
 
+  // Auto stop nếu hết giờ
   useEffect(() => {
-    if (!isRunning || !endAt) return;
-    if (now >= endAt) setIsRunning(false);
-  }, [now, endAt, isRunning]);
+    if (!session?.isRunning) return;
+    if (session.endAt && now >= session.endAt) {
+      setSession((s) => (s ? { ...s, isRunning: false } : s));
+    }
+  }, [now, session]);
 
   const remainingMs = useMemo(() => {
-    if (!isRunning || !endAt) return 0;
-    return Math.max(0, endAt - now);
-  }, [isRunning, endAt, now]);
+    if (!session?.isRunning || !session?.endAt) return 0;
+    return Math.max(0, session.endAt - now);
+  }, [session, now]);
 
   const remainingText = useMemo(() => {
     const s = Math.floor(remainingMs / 1000);
@@ -55,34 +78,28 @@ export default function TeacherSessionsPage() {
 
   function startSession() {
     const code = generateCode(6);
-    const start = Date.now();
-    const end = start + Number(durationMin) * 60 * 1000;
+    const startAt = Date.now();
+    const endAt = startAt + Number(durationMin) * 60 * 1000;
 
-    setAttendanceCode(code);
-    setStartAt(start);
-    setEndAt(end);
-    setIsRunning(true);
-    setChecked([]);
+    setSession({
+      classId,
+      code,
+      startAt,
+      endAt,
+      isRunning: true,
+    });
+
+    // phiên mới -> reset checkins
+    setCheckins([]);
   }
 
   function stopSession() {
-    setIsRunning(false);
+    setSession((s) => (s ? { ...s, isRunning: false } : s));
   }
 
-  // demo checkin
-  const [demoStudentId, setDemoStudentId] = useState("");
-  const [demoStudentName, setDemoStudentName] = useState("");
-  const [demoInputCode, setDemoInputCode] = useState("");
-
-  function demoCheckIn() {
-    if (!isRunning) return alert("Chưa mở điểm danh.");
-    if (!demoStudentId.trim() || !demoStudentName.trim()) return alert("Nhập MSSV và tên sinh viên.");
-    if (demoInputCode.trim().toUpperCase() !== attendanceCode) return alert("Sai mã điểm danh!");
-    const sid = demoStudentId.trim();
-    if (checked.some((x) => x.studentId === sid)) return alert("Sinh viên này đã điểm danh rồi.");
-
-    setChecked((prev) => [...prev, { studentId: sid, studentName: demoStudentName.trim(), checkedAt: Date.now() }]);
-    setDemoInputCode("");
+  function clearSession() {
+    if (!confirm("Xóa phiên điểm danh hiện tại?")) return;
+    setSession(null);
   }
 
   return (
@@ -92,19 +109,23 @@ export default function TeacherSessionsPage() {
         onClick={() => nav("/teacher/classes")}
         style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ddd", background: "#fff" }}
       >
-        ← Quay lại Classes
+        ← Quay lại
       </button>
 
       <div style={{ marginTop: 12 }}>
         <h1 style={{ marginBottom: 6 }}>Quản lý buổi điểm danh</h1>
         <div style={{ color: "#555" }}>
-          Lớp: <b>{classInfo ? `${classInfo.subjectName} - ${classInfo.subjectCode}` : `ClassId: ${classId}`}</b>
+          Lớp:{" "}
+          <b>
+            {classInfo ? `${classInfo.subjectName} - ${classInfo.subjectCode}` : `ClassId: ${classId}`}
+          </b>
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 12, marginTop: 16 }}>
+        {/* Control */}
         <div style={{ border: "1px solid #ddd", borderRadius: 12, background: "#fff", padding: 14 }}>
-          <div style={{ fontWeight: 800, fontSize: 16 }}>Thiết lập & Mở điểm danh</div>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>Mở điểm danh</div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <label style={{ fontWeight: 600 }}>Thời lượng (phút):</label>
@@ -115,10 +136,10 @@ export default function TeacherSessionsPage() {
               value={durationMin}
               onChange={(e) => setDurationMin(e.target.value)}
               style={{ width: 120, padding: 8, borderRadius: 8, border: "1px solid #ccc" }}
-              disabled={isRunning}
+              disabled={session?.isRunning}
             />
 
-            {!isRunning ? (
+            {!session?.isRunning ? (
               <button
                 type="button"
                 onClick={startSession}
@@ -132,52 +153,55 @@ export default function TeacherSessionsPage() {
                 onClick={stopSession}
                 style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #f3c2c2", background: "#fff5f5", color: "#b00020" }}
               >
-                Dừng điểm danh
+                Dừng
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={clearSession}
+              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff" }}
+            >
+              Xóa phiên
+            </button>
           </div>
 
           <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#fafafa", border: "1px dashed #ccc" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div>
                 <div style={{ color: "#666", fontSize: 13 }}>Mã điểm danh</div>
-                <div style={{ fontWeight: 900, fontSize: 28, letterSpacing: 2 }}>{attendanceCode || "------"}</div>
+                <div style={{ fontWeight: 900, fontSize: 28, letterSpacing: 2 }}>
+                  {session?.code || "------"}
+                </div>
               </div>
 
               <div>
                 <div style={{ color: "#666", fontSize: 13 }}>Trạng thái</div>
-                <div style={{ fontWeight: 800 }}>{isRunning ? `Đang mở • Còn ${remainingText}` : "Chưa mở / Đã hết hạn"}</div>
+                <div style={{ fontWeight: 800 }}>
+                  {session?.isRunning ? `Đang mở • Còn ${remainingText}` : "Chưa mở / Đã dừng / Hết hạn"}
+                </div>
                 <div style={{ color: "#777", marginTop: 4 }}>
-                  Bắt đầu: {startAt ? fmtTime(startAt) : "--:--:--"} • Kết thúc: {endAt ? fmtTime(endAt) : "--:--:--"}
+                  Bắt đầu: {session?.startAt ? fmtTime(session.startAt) : "--:--:--"} • Kết thúc:{" "}
+                  {session?.endAt ? fmtTime(session.endAt) : "--:--:--"}
                 </div>
               </div>
             </div>
           </div>
         </div>
 
+        {/* Quick stats */}
         <div style={{ border: "1px solid #ddd", borderRadius: 12, background: "#fff", padding: 14 }}>
-          <div style={{ fontWeight: 800, fontSize: 16 }}>Giả lập sinh viên điểm danh (test)</div>
-
-          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <input value={demoStudentId} onChange={(e) => setDemoStudentId(e.target.value)} placeholder="MSSV" style={{ padding: 10, borderRadius: 10, border: "1px solid #ccc" }} />
-            <input value={demoStudentName} onChange={(e) => setDemoStudentName(e.target.value)} placeholder="Tên sinh viên" style={{ padding: 10, borderRadius: 10, border: "1px solid #ccc" }} />
-            <input value={demoInputCode} onChange={(e) => setDemoInputCode(e.target.value.toUpperCase())} placeholder="Nhập mã điểm danh" style={{ padding: 10, borderRadius: 10, border: "1px solid #ccc", letterSpacing: 2, fontWeight: 800 }} />
-            <button type="button" onClick={demoCheckIn} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff" }}>
-              Điểm danh
-            </button>
-          </div>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>Đã điểm danh</div>
+          <div style={{ marginTop: 8, fontSize: 28, fontWeight: 900 }}>{checkins.length}</div>
+          <div style={{ color: "#666" }}>Sinh viên</div>
         </div>
       </div>
 
+      {/* Checkins list */}
       <div style={{ marginTop: 14, border: "1px solid #ddd", borderRadius: 12, background: "#fff", padding: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 800, fontSize: 16 }}>Sinh viên đã điểm danh</div>
-          <div style={{ color: "#666" }}>
-            Tổng: <b>{checked.length}</b>
-          </div>
-        </div>
+        <div style={{ fontWeight: 800, fontSize: 16 }}>Danh sách sinh viên đã điểm danh</div>
 
-        {checked.length === 0 ? (
+        {checkins.length === 0 ? (
           <div style={{ marginTop: 10, color: "#777" }}>Chưa có sinh viên nào điểm danh.</div>
         ) : (
           <div style={{ marginTop: 10, overflowX: "auto" }}>
@@ -191,7 +215,7 @@ export default function TeacherSessionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {checked
+                {checkins
                   .slice()
                   .sort((a, b) => a.checkedAt - b.checkedAt)
                   .map((s, idx) => (

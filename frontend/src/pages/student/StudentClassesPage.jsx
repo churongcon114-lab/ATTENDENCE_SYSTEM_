@@ -15,6 +15,13 @@ const DAYS = [
   { value: "FRI", label: "Thứ 6" },
   { value: "SAT", label: "Thứ 7" },
   { value: "SUN", label: "Chủ nhật" },
+  { value: "MON", label: "Thứ 2" },
+  { value: "TUE", label: "Thứ 3" },
+  { value: "WED", label: "Thứ 4" },
+  { value: "THU", label: "Thứ 5" },
+  { value: "FRI", label: "Thứ 6" },
+  { value: "SAT", label: "Thứ 7" },
+  { value: "SUN", label: "Chủ nhật" },
 ];
 
 const PERIODS = [1, 2, 3, 4];

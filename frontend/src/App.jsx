@@ -10,17 +10,18 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 
 // Student pages
 import StudentClassesPage from "./pages/student/StudentClassesPage.jsx";
-import StudentLeavePage from "./pages/student/StudentLeavePage.jsx";
 import ClassSessionsPage from "./pages/student/ClassSessionsPage.jsx";
+import StudentLeavePage from "./pages/student/StudentLeavePage.jsx";
 
 // Teacher pages
 import TeacherClassesPage from "./pages/teacher/TeacherClassesPage.jsx";
-import TeacherLeavePage from "./pages/teacher/TeacherLeavePage.jsx";
 import TeacherSessionsPage from "./pages/teacher/TeacherSessionsPage.jsx";
+import TeacherLeavePage from "./pages/teacher/TeacherLeavePage.jsx";
 
 export default function App() {
   return (
     <Routes>
+      {/* ===================== PUBLIC ===================== */}
       <Route path="/" element={<Navigate to="/login" replace />} />
 
       <Route path="/login" element={<LoginPage />} />
@@ -38,7 +39,6 @@ export default function App() {
         }
       />
 
-      {/* sessions theo class */}
       <Route
         path="/student/classes/:classId/sessions"
         element={
@@ -48,7 +48,6 @@ export default function App() {
         }
       />
 
-      {/* xin vắng theo class */}
       <Route
         path="/student/classes/:classId/leave"
         element={
@@ -58,7 +57,7 @@ export default function App() {
         }
       />
 
-      {/* route cũ (nếu chỗ khác vẫn dùng /student/leave) */}
+      {/* Route cũ (fallback) */}
       <Route
         path="/student/leave"
         element={
@@ -78,7 +77,6 @@ export default function App() {
         }
       />
 
-      {/* ✅ Quản lý buổi điểm danh theo class */}
       <Route
         path="/teacher/classes/:classId/sessions"
         element={
@@ -88,7 +86,6 @@ export default function App() {
         }
       />
 
-      {/* ✅ Duyệt đơn vắng theo class */}
       <Route
         path="/teacher/classes/:classId/leave"
         element={
@@ -98,7 +95,7 @@ export default function App() {
         }
       />
 
-      {/* route cũ (nếu chỗ khác vẫn dùng /teacher/leave) */}
+      {/* Route cũ (fallback) */}
       <Route
         path="/teacher/leave"
         element={

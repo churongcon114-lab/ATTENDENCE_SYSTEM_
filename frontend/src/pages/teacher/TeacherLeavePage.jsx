@@ -29,12 +29,8 @@ function pick(obj, keys) {
 function parseDateFlexible(input) {
   if (!input) return null;
 
-  // Date object
-  if (input instanceof Date) {
-    return Number.isNaN(input.getTime()) ? null : input;
-  }
+  if (input instanceof Date) return Number.isNaN(input.getTime()) ? null : input;
 
-  // number timestamp
   if (typeof input === "number") {
     const d = new Date(input);
     return Number.isNaN(d.getTime()) ? null : d;
@@ -42,13 +38,13 @@ function parseDateFlexible(input) {
 
   const s = String(input).trim();
 
-  // ISO: YYYY-MM-DD  (an toàn nhất)
+  // ISO YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     const d = new Date(`${s}T00:00:00`);
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
-  // dd/mm/yyyy (kiểu VN)
+  // dd/mm/yyyy
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = parseInt(m[1], 10);
@@ -58,7 +54,6 @@ function parseDateFlexible(input) {
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
-  // fallback parse
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -73,17 +68,13 @@ function fmtDateTime(ts) {
   return d ? d.toLocaleString("vi-VN") : "-";
 }
 
-
 /**
- * ✅ Parse reason để lấy SV/MSSV + khoảng nghỉ + lý do thuần
- * Dạng bạn đang gửi:
- * [SV: tienks | MSSV: 056206005633 | Xin nghỉ: 2026-01-24 → 2026-01-24] ss
+ * Parse reason:
+ * [SV: tienks | MSSV: 056206005633 | Xin nghỉ: 2026-01-24 → 2026-01-28] sss
  */
 function parseLeaveReason(raw) {
   const s = String(raw || "").trim();
 
-  // Ưu tiên bắt đúng YYYY-MM-DD → YYYY-MM-DD trong đoạn "Xin nghỉ:"
-  // Ví dụ: [SV: ... | MSSV: ... | Xin nghỉ: 2026-01-24 → 2026-01-24] ss
   const mIso = s.match(
     /^\[\s*SV\s*:\s*(.*?)\s*\|\s*MSSV\s*:\s*(.*?)\s*\|\s*Xin\s*nghỉ\s*:\s*(\d{4}-\d{2}-\d{2})\s*(?:→|->|–|-)\s*(\d{4}-\d{2}-\d{2})\s*\]\s*(.*)$/i
   );
@@ -97,7 +88,6 @@ function parseLeaveReason(raw) {
     };
   }
 
-  // Fallback chung (nếu không phải ISO)
   const m = s.match(
     /^\[\s*SV\s*:\s*(.*?)\s*\|\s*MSSV\s*:\s*(.*?)\s*\|\s*Xin\s*nghỉ\s*:\s*(.*?)\s*(?:→|->|–|-)\s*(.*?)\s*\]\s*(.*)$/i
   );
@@ -111,7 +101,6 @@ function parseLeaveReason(raw) {
     };
   }
 
-  // fallback cũ: [Xin nghỉ: a → b] reason...
   const m2 = s.match(/^\[\s*Xin\s*nghỉ\s*:\s*(.+?)\s*(?:→|->|–|-)\s*(.+?)\s*\]\s*(.*)$/i);
   if (m2) {
     return {
@@ -126,30 +115,23 @@ function parseLeaveReason(raw) {
   return { studentName: "", studentCode: "", from: "", to: "", pureReason: s };
 }
 
-
-/**
- * ✅ Lấy ID lớp an toàn nhiều kiểu object
- * - Teacher classes thường: { _id, subjectCode, subjectName, ... }
- * - Có nơi có thể: { id } hoặc { classId } hoặc { class: {...} }
- */
+// class helpers
 function getClassId(c) {
   return c?.classId || c?.class?._id || c?.class?.id || c?._id || c?.id || "";
 }
-
 function getSubjectCode(c) {
   return c?.subjectCode || c?.class?.subjectCode || "—";
 }
-
 function getSubjectName(c) {
   return c?.subjectName || c?.class?.subjectName || "";
 }
 
-// gọi API approve/reject linh hoạt theo tên hàm bạn đang có
-async function approveFlexible(id, note) {
+// flexible approve/reject
+async function approveFlexible(id) {
   const candidates = [
-    () => attendanceApi.approveLeave?.(id, note),
+    () => attendanceApi.approveLeave?.(id, ""),
     () => attendanceApi.approveLeave?.(id),
-    () => attendanceApi.updateLeaveStatus?.(id, "APPROVED", note),
+    () => attendanceApi.updateLeaveStatus?.(id, "APPROVED", ""),
     () => attendanceApi.updateLeaveStatus?.(id, "APPROVED"),
   ];
   let lastErr = null;
@@ -161,14 +143,14 @@ async function approveFlexible(id, note) {
       lastErr = e;
     }
   }
-  throw lastErr || new Error("Chưa có API approveLeave / updateLeaveStatus.");
+  throw lastErr || new Error("Chưa có API approve.");
 }
 
-async function rejectFlexible(id, note) {
+async function rejectFlexible(id) {
   const candidates = [
-    () => attendanceApi.rejectLeave?.(id, note),
+    () => attendanceApi.rejectLeave?.(id, ""),
     () => attendanceApi.rejectLeave?.(id),
-    () => attendanceApi.updateLeaveStatus?.(id, "REJECTED", note),
+    () => attendanceApi.updateLeaveStatus?.(id, "REJECTED", ""),
     () => attendanceApi.updateLeaveStatus?.(id, "REJECTED"),
   ];
   let lastErr = null;
@@ -180,7 +162,7 @@ async function rejectFlexible(id, note) {
       lastErr = e;
     }
   }
-  throw lastErr || new Error("Chưa có API rejectLeave / updateLeaveStatus.");
+  throw lastErr || new Error("Chưa có API reject.");
 }
 
 export default function TeacherLeavePage() {
@@ -194,13 +176,9 @@ export default function TeacherLeavePage() {
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
 
-  const [statusFilter, setStatusFilter] = useState("PENDING"); // PENDING | APPROVED | REJECTED | ALL
+  const [statusFilter, setStatusFilter] = useState("PENDING");
   const [leaves, setLeaves] = useState([]);
 
-  // note theo từng leaveId
-  const [notes, setNotes] = useState({}); // { [id]: "..." }
-
-  // ✅ danh sách lớp của teacher
   const [teacherClasses, setTeacherClasses] = useState([]);
   const [classesLoading, setClassesLoading] = useState(true);
 
@@ -208,23 +186,19 @@ export default function TeacherLeavePage() {
     setClassesLoading(true);
     try {
       const res = await attendanceApi.getTeacherClasses?.();
-      const arr = toArray(res);
-      setTeacherClasses(arr);
-    } catch (e) {
+      setTeacherClasses(toArray(res));
+    } catch {
       setTeacherClasses([]);
     } finally {
       setClassesLoading(false);
     }
   }
 
-  // tải danh sách lớp
   useEffect(() => {
     loadTeacherClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Sau khi có danh sách lớp: đảm bảo classId hợp lệ,
-  // nếu không thì tự chọn: last-used -> first class
   useEffect(() => {
     if (classesLoading) return;
     if (!teacherClasses || teacherClasses.length === 0) return;
@@ -244,12 +218,9 @@ export default function TeacherLeavePage() {
     if (!fallbackId) return;
 
     const found = teacherClasses.find((c) => String(getClassId(c)) === fallbackId);
-
-    // replace: tránh back/forward bị rối
     nav(`/teacher/classes/${fallbackId}/leave`, { replace: true, state: { classInfo: found || null } });
   }, [classesLoading, teacherClasses, classId, nav]);
 
-  // lớp đang chọn (từ list hoặc state)
   const selectedClass = useMemo(() => {
     const found = teacherClasses.find((c) => String(getClassId(c)) === String(classId));
     return found || classInfoFromState || null;
@@ -265,15 +236,9 @@ export default function TeacherLeavePage() {
 
   const classOptions = useMemo(() => {
     const mapped = (teacherClasses || [])
-      .map((c) => ({
-        id: getClassId(c),
-        code: getSubjectCode(c),
-        name: getSubjectName(c),
-        raw: c,
-      }))
+      .map((c) => ({ id: getClassId(c), code: getSubjectCode(c), name: getSubjectName(c) }))
       .filter((o) => o.id);
 
-    // dedupe theo id
     const seen = new Set();
     const uniq = [];
     for (const o of mapped) {
@@ -301,7 +266,6 @@ export default function TeacherLeavePage() {
         setLeaves([]);
         return;
       }
-
       const statusArg = statusFilter === "ALL" ? undefined : statusFilter;
       const res = await attendanceApi.getLeaveRequestsByClass(classId, statusArg);
       setLeaves(toArray(res));
@@ -323,8 +287,7 @@ export default function TeacherLeavePage() {
     setMsg("");
     try {
       setActing(true);
-      const note = String(notes[id] || "").trim();
-      await approveFlexible(id, note);
+      await approveFlexible(id);
       setMsg("Phê duyệt thành công.");
       await load();
     } catch (e) {
@@ -339,8 +302,7 @@ export default function TeacherLeavePage() {
     setMsg("");
     try {
       setActing(true);
-      const note = String(notes[id] || "").trim();
-      await rejectFlexible(id, note);
+      await rejectFlexible(id);
       setMsg("Từ chối đơn thành công.");
       await load();
     } catch (e) {
@@ -429,15 +391,6 @@ export default function TeacherLeavePage() {
       whiteSpace: "nowrap",
     }),
     twoCol: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 },
-    input: {
-      width: "100%",
-      borderRadius: 12,
-      border: "1px solid rgba(255,255,255,.12)",
-      background: "rgba(0,0,0,.28)",
-      color: "#fff",
-      padding: "10px 12px",
-      outline: "none",
-    },
     btnRow: { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 },
     btn: (kind) => ({
       flex: "1 1 180px",
@@ -471,7 +424,6 @@ export default function TeacherLeavePage() {
               value={classId || ""}
               onChange={(e) => onChangeClass(e.target.value)}
               disabled={classesLoading || classOptions.length === 0}
-              title={classOptions.length === 0 ? "Chưa có lớp để chọn" : "Chọn lớp để duyệt"}
             >
               {classOptions.length === 0 ? (
                 <option value="">{classesLoading ? "Đang tải lớp..." : "Không có lớp"}</option>
@@ -511,11 +463,9 @@ export default function TeacherLeavePage() {
               {leaves.map((lv) => {
                 const id = lv?._id || lv?.id;
 
-                // ✅ parse reason để lấy SV/MSSV và khoảng ngày
                 const rawReason = String(lv?.reason || "");
                 const meta = parseLeaveReason(rawReason);
 
-                // ✅ student info: ưu tiên field riêng -> fallback meta -> fallback lv.student
                 const stuName =
                   pick(lv, ["studentName", "fullName", "name"]) ||
                   meta.studentName ||
@@ -530,11 +480,9 @@ export default function TeacherLeavePage() {
 
                 const stuId = pick(lv, ["studentId"]) || pick(lv?.student, ["_id", "id"]) || "—";
 
-                // ✅ time range: ưu tiên field riêng -> fallback meta
                 const from = lv?.startDate || lv?.fromDate || lv?.dateFrom || meta.from;
                 const to = lv?.endDate || lv?.toDate || lv?.dateTo || meta.to;
 
-                // ✅ lý do thuần (không lộ header [SV: ...])
                 const pureReason = (meta.pureReason || "").trim() || "—";
 
                 const status = String(lv?.status || "PENDING").toUpperCase();
@@ -576,16 +524,6 @@ export default function TeacherLeavePage() {
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontSize: 12, opacity: 0.7 }}>Lý do</div>
                       <div style={{ fontWeight: 800, marginTop: 4 }}>{pureReason}</div>
-                    </div>
-
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ fontSize: 12, opacity: 0.7 }}>Ghi chú giáo viên (tuỳ chọn)</div>
-                      <textarea
-                        style={{ ...s.input, minHeight: 70, resize: "vertical", marginTop: 6 }}
-                        value={notes[id] || ""}
-                        onChange={(e) => setNotes((prev) => ({ ...prev, [id]: e.target.value }))}
-                        placeholder="VD: Vui lòng bổ sung giấy xác nhận / Đồng ý..."
-                      />
                     </div>
 
                     {status === "PENDING" ? (

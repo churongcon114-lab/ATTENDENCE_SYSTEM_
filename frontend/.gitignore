@@ -1,4 +1,23 @@
-# Logs
+# dependencies
+node_modules/
+
+# builds
+dist/
+dist-ssr/
+build/
+
+# vite cache
+.vite/
+
+# env
+.env
+.env.*
+!.env.example
+
+# local overrides
+*.local
+
+# logs
 logs
 *.log
 npm-debug.log*
@@ -7,18 +26,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
+# editor
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?

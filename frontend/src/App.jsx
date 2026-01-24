@@ -11,12 +11,12 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import StudentClassesPage from "./pages/student/StudentClassesPage.jsx";
 import StudentLeavePage from "./pages/student/StudentLeavePage.jsx";
 import ClassSessionsPage from "./pages/student/ClassSessionsPage.jsx";
-
+import StudentProfilePage from "./pages/student/StudentProfilePage.jsx";
 // Teacher
 import TeacherClassesPage from "./pages/teacher/TeacherClassesPage.jsx";
 import TeacherLeavePage from "./pages/teacher/TeacherLeavePage.jsx";
 import TeacherSessionsPage from "./pages/teacher/TeacherSessionsPage.jsx";
-
+import TeacherProfilePage from "./pages/teacher/TeacherProfilePage.jsx";
 export default function App() {
   return (
     <Routes>
@@ -60,6 +60,15 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      <Route
+      path="/student/profile"
+      element={
+          <ProtectedRoute role="student">
+            <StudentProfilePage />
+           </ProtectedRoute>
+         }
+      />
+
 
       {/* TEACHER */}
       <Route
@@ -86,6 +95,7 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      
       <Route
         path="/teacher/leave"
         element={
@@ -94,6 +104,14 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      <Route
+  path="/teacher/profile"
+  element={
+    <ProtectedRoute role="teacher">
+      <TeacherProfilePage />
+    </ProtectedRoute>
+  }
+/>
 
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>

@@ -3,15 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { attendanceApi } from "../../api/attendanceApi";
 
-/**
- * StudentLeavePage (tương thích backend cũ yêu cầu sessionId)
- * - SV chọn lớp, chọn ngày start/end, nhập lý do.
- * - Khi gửi: tự tìm sessionId (active session -> fallback last session)
- * - Lưu reason theo format mới để Teacher parse:
- *   [SV: <name> | MSSV: <code> | Xin nghỉ: YYYY-MM-DD → YYYY-MM-DD] <reason>
- * - Bảng "Đơn xin nghỉ của tôi" sẽ parse được cả format mới + format cũ để hiển thị ngày.
- */
-
 // ---------------- helpers ----------------
 function safeParse(json) {
   try {
@@ -20,14 +11,12 @@ function safeParse(json) {
     return null;
   }
 }
-
 function unwrapUser(obj) {
   if (!obj || typeof obj !== "object") return null;
   if (obj.user && typeof obj.user === "object") return obj.user;
   if (obj.data?.user && typeof obj.data.user === "object") return obj.data.user;
   return obj;
 }
-
 function readUser() {
   const keys = ["attendance_user", "auth_user", "user", "currentUser"];
   for (const k of keys) {
@@ -39,7 +28,6 @@ function readUser() {
   }
   return null;
 }
-
 function pick(obj, keys) {
   for (const k of keys) {
     const v = obj?.[k];
@@ -47,7 +35,6 @@ function pick(obj, keys) {
   }
   return "";
 }
-
 function toArray(resp) {
   if (!resp) return [];
   if (Array.isArray(resp)) return resp;
@@ -59,13 +46,10 @@ function toArray(resp) {
   if (Array.isArray(resp.data?.leaves)) return resp.data.leaves;
   return [];
 }
-
 function ensureYMD(input) {
   const s = String(input || "").trim();
   if (!s) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  // dd/mm/yyyy -> YYYY-MM-DD
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const dd = String(parseInt(m[1], 10)).padStart(2, "0");
@@ -75,54 +59,30 @@ function ensureYMD(input) {
   }
   return s;
 }
-
 function fmtDateOnly(ts) {
   if (!ts) return "-";
   const s = String(ts).trim();
-
-  // ISO YYYY-MM-DD => parse an toàn
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     const d = new Date(`${s}T00:00:00`);
     return Number.isNaN(d.getTime()) ? "-" : d.toLocaleDateString("vi-VN");
   }
-
-  try {
-    const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? "-" : d.toLocaleDateString("vi-VN");
-  } catch {
-    return "-";
-  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "-" : d.toLocaleDateString("vi-VN");
 }
-
 function fmtDateTime(ts) {
   if (!ts) return "-";
-  try {
-    const d = new Date(ts);
-    return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString("vi-VN");
-  } catch {
-    return "-";
-  }
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString("vi-VN");
 }
-
 function getClassId(c) {
   return c?._id || c?.id || c?.classId || "";
 }
-
 function getSubjectCode(c) {
-  return c?.subjectCode || c?.code || "—";
+  return c?.subjectCode || c?.classCode || c?.code || "—";
 }
-
 function getSubjectName(c) {
-  return c?.subjectName || c?.name || "";
+  return c?.subjectName || c?.courseName || c?.name || "";
 }
-
-/**
- * Parse reason để lấy from/to + pureReason
- * - Format mới:
- *   [SV: <name> | MSSV: <code> | Xin nghỉ: YYYY-MM-DD → YYYY-MM-DD] <reason>
- * - Format cũ:
- *   [Xin nghỉ: a → b] <reason>
- */
 function parseLeaveReason(raw) {
   const s = String(raw || "").trim();
 
@@ -141,13 +101,7 @@ function parseLeaveReason(raw) {
 
   const mOld = s.match(/^\[\s*Xin\s*nghỉ\s*:\s*(.+?)\s*(?:→|->|–|-)\s*(.+?)\s*\]\s*(.*)$/i);
   if (mOld) {
-    return {
-      studentName: "",
-      studentCode: "",
-      from: (mOld[1] || "").trim(),
-      to: (mOld[2] || "").trim(),
-      pureReason: (mOld[3] || "").trim(),
-    };
+    return { studentName: "", studentCode: "", from: (mOld[1] || "").trim(), to: (mOld[2] || "").trim(), pureReason: (mOld[3] || "").trim() };
   }
 
   return { studentName: "", studentCode: "", from: "", to: "", pureReason: s };
@@ -196,12 +150,7 @@ export default function StudentLeavePage() {
 
   const classOptions = useMemo(() => {
     const mapped = (Array.isArray(myClasses) ? myClasses : [])
-      .map((c) => ({
-        id: getClassId(c),
-        code: getSubjectCode(c),
-        name: getSubjectName(c),
-        raw: c,
-      }))
+      .map((c) => ({ id: getClassId(c), code: getSubjectCode(c), name: getSubjectName(c), raw: c }))
       .filter((o) => o.id);
 
     const seen = new Set();
@@ -216,7 +165,6 @@ export default function StudentLeavePage() {
   }, [myClasses]);
 
   useEffect(() => {
-    // default today
     if (!startDate && !endDate) {
       const today = new Date();
       const yyyy = today.getFullYear();
@@ -235,18 +183,13 @@ export default function StudentLeavePage() {
       setError("");
       setMsg("");
 
-      const getMyClassesFn = attendanceApi.getMyClasses || attendanceApi.getStudentClasses || attendanceApi.getMyEnrolledClasses;
-
       const [rl, rc] = await Promise.allSettled([
         attendanceApi.getMyLeaveRequestsByClass?.(classId),
-        typeof getMyClassesFn === "function" ? getMyClassesFn() : Promise.resolve([]),
+        attendanceApi.getMyClasses?.(),
       ]);
 
-      const leavesResp = rl.status === "fulfilled" ? rl.value : null;
-      const classesResp = rc.status === "fulfilled" ? rc.value : null;
-
-      setMyLeaves(toArray(leavesResp));
-      setMyClasses(toArray(classesResp));
+      setMyLeaves(toArray(rl.status === "fulfilled" ? rl.value : null));
+      setMyClasses(toArray(rc.status === "fulfilled" ? rc.value : null));
     } catch (e) {
       setError(e?.response?.data?.message || e?.message || "Lỗi không xác định");
     } finally {
@@ -286,25 +229,6 @@ export default function StudentLeavePage() {
     try {
       setSubmitting(true);
 
-      // ✅ backend cũ yêu cầu sessionId: active -> fallback last
-      let sessionId = "";
-      try {
-        const a = await attendanceApi.getActiveSessionByClass(classId);
-        const active = a?.data?.data || a?.data || a;
-        sessionId = active?._id || active?.id || "";
-      } catch {}
-
-      if (!sessionId) {
-        const sres = await attendanceApi.getSessionsByClass(classId);
-        const sessions = toArray(sres);
-        const last = sessions[sessions.length - 1];
-        sessionId = last?._id || last?.id || "";
-      }
-
-      if (!sessionId) {
-        return setError("Không tìm thấy buổi học (session) để gửi đơn (backend hiện yêu cầu sessionId).");
-      }
-
       const fromYMD = ensureYMD(startDate);
       const toYMD = ensureYMD(endDate);
 
@@ -312,7 +236,15 @@ export default function StudentLeavePage() {
         reason
       ).trim()}`;
 
-      await attendanceApi.requestLeave(sessionId, reasonFull);
+      await attendanceApi.requestLeave(String(classId), {
+        startDate: fromYMD,
+        endDate: toYMD,
+        reason: reasonFull,
+        studentName: studentName || "",
+        studentCode: studentCode || "",
+        subjectCode: subjectCode || "",
+        subjectName: subjectName || "",
+      });
 
       setMsg("Gửi thư xin nghỉ học thành công. Thư đã chuyển đến giáo viên phụ trách để phê duyệt.");
       setReason("");
@@ -482,7 +414,7 @@ export default function StudentLeavePage() {
           <div style={s.card}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <div style={s.title}>Tạo thư xin nghỉ</div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>Gửi bất cứ lúc nào • Không cần chọn buổi</div>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>Gửi bất cứ lúc nào</div>
             </div>
 
             <div style={{ display: "grid", gap: 10 }}>
@@ -578,17 +510,15 @@ export default function StudentLeavePage() {
                       const name = lv?.subjectName || subjectName;
 
                       const meta = parseLeaveReason(lv?.reason);
-
-                      const from = lv?.startDate || lv?.fromDate || lv?.dateFrom || meta.from;
-                      const to = lv?.endDate || lv?.toDate || lv?.dateTo || meta.to;
+                      const from = lv?.startDate || meta.from;
+                      const to = lv?.endDate || meta.to;
 
                       const pureReason = meta.pureReason || String(lv?.reason || "").trim();
-
                       const status = String(lv?.status || "PENDING").toUpperCase();
                       const created = lv?.createdAt || lv?.time;
 
                       return (
-                        <tr key={lv?._id || lv?.id || idx}>
+                        <tr key={lv?._id || idx}>
                           <td style={s.td}>{idx + 1}</td>
                           <td style={s.td}>
                             <div style={{ fontWeight: 900 }}>{code}</div>

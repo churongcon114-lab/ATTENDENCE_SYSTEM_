@@ -1,35 +1,40 @@
-// server.js
+// backend/server.js
 import express from "express";
 import cors from "cors";
 import crypto from "crypto";
-import attendanceLeaveRoutes from "./routes/attendanceLeaveRoutes.js";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const app = express();
-app.use(express.json());
 
-app.use("/api/attendance", attendanceLeaveRoutes);
-app.use(
-  cors({
-    origin: "http://localhost:5173",
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-role"],
-  })
-);
+// ===== load backend/.env đúng đường dẫn =====
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, ".env") });
 
-// ===== In-memory DB (demo) =====
-const db = {
-  classes: [], // { _id, subjectName, subjectCode, teacherName, dayOfWeek, period, createdBy }
-  sessions: [], // { _id, classId, attendanceCode, startTime, endTime, status, createdBy, lesson }
-  attendance: [], // { _id, sessionId, classId, studentId, checkedAt, status }
-  leaves: [], // { _id, classId, sessionId, studentId, reason, status, createdAt }
-
-  // NEW: profiles (demo)
-  profiles: {
-    // key = userId
-    // value = { userId, role, fullName, email, phone, msv, updatedAt }
-  },
+// ===== CORS =====
+const corsOptions = {
+  origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-role"],
 };
 
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+app.use(express.json());
+
+// ===== In-memory DB =====
+const db = {
+  classes: [],     // { _id, classCode, className, courseName, subjectCode, subjectName, teacherName, dayOfWeek, period, createdBy, createdAt }
+  sessions: [],    // { _id, classId, attendanceCode, startTime, endTime, status, createdBy, lesson, period, createdAt, closedAt }
+  attendance: [],  // { _id, sessionId, classId, studentId, checkedAt, status }
+  leaves: [],      // { _id, classId, sessionId, studentId, studentName, studentCode, subjectCode, subjectName, startDate, endDate, reason, status, teacherNote, decidedAt, decidedBy, createdAt, updatedAt }
+  profiles: {},    // userId -> { userId, role, fullName, email, phone, msv, updatedAt }
+};
+
+// ===== helpers =====
 function uid() {
   return crypto.randomUUID
     ? crypto.randomUUID()
@@ -42,17 +47,16 @@ function code5() {
   for (let i = 0; i < 5; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
 }
+
 function normalizeCode(code) {
   return String(code || "").trim().toUpperCase().replace(/\s+/g, "");
 }
-
 
 function normalizeId(s) {
   return String(s || "").trim();
 }
 
 function getAuth(req) {
-  // IMPORTANT: userId lấy từ header -> chính là MSV bạn set ở localStorage.userId
   const userId = normalizeId(req.headers["x-user-id"] || "");
   const role = String(req.headers["x-role"] || "STUDENT").toUpperCase(); // STUDENT | TEACHER
   return { userId, role };
@@ -82,13 +86,21 @@ function autoCloseExpiredSessions() {
   }
 }
 
-// ===================== PROFILES (NEW - DEMO) =====================
-// Get my profile
+function isIsoYmd(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s || "").trim());
+}
+
+function parseYmdToMs(ymd) {
+  const s = String(ymd || "").trim();
+  if (!isIsoYmd(s)) return NaN;
+  return new Date(`${s}T00:00:00`).getTime();
+}
+
+// ===================== PROFILES =====================
 app.get("/api/profile/me", ensureAuth, (req, res) => {
   const { userId, role } = getAuth(req);
 
   const existing = db.profiles[userId] || null;
-  // nếu chưa có thì trả "mặc định"
   if (!existing) {
     return res.json({
       userId,
@@ -104,7 +116,6 @@ app.get("/api/profile/me", ensureAuth, (req, res) => {
   res.json(existing);
 });
 
-// Update my profile
 app.put("/api/profile/me", ensureAuth, (req, res) => {
   const { userId, role } = getAuth(req);
   const { fullName = "", email = "", phone = "", msv = "" } = req.body || {};
@@ -115,7 +126,7 @@ app.put("/api/profile/me", ensureAuth, (req, res) => {
     fullName: String(fullName || "").trim(),
     email: String(email || "").trim(),
     phone: String(phone || "").trim(),
-    msv: role === "STUDENT" ? String(msv || userId).trim() : "", // student mới có msv
+    msv: role === "STUDENT" ? String(msv || userId).trim() : "",
     updatedAt: Date.now(),
   };
 
@@ -124,21 +135,16 @@ app.put("/api/profile/me", ensureAuth, (req, res) => {
 });
 
 // ===================== CLASSES =====================
-
-// Teacher creates class
 app.post("/api/teacher/classes", ensureRole("TEACHER"), ensureAuth, (req, res) => {
   const { userId } = getAuth(req);
 
   const {
-    // payload mới từ frontend
     classCode,
     className,
     courseName,
     teacherName,
     dayOfWeek,
     period,
-
-    // payload cũ (nếu còn dùng)
     subjectCode,
     subjectName,
   } = req.body || {};
@@ -156,13 +162,11 @@ app.post("/api/teacher/classes", ensureRole("TEACHER"), ensureAuth, (req, res) =
 
   const c = {
     _id: uid(),
-
-    // ✅ field mới để UI tách 2 cột
     classCode: code,
     className: clsName,
     courseName: crsName,
 
-    // ✅ giữ field cũ cho tương thích
+    // giữ field cũ cho tương thích UI
     subjectCode: code,
     subjectName: crsName,
 
@@ -176,7 +180,6 @@ app.post("/api/teacher/classes", ensureRole("TEACHER"), ensureAuth, (req, res) =
   db.classes.push(c);
   res.json(c);
 });
-
 
 app.get("/api/teacher/classes", ensureRole("TEACHER"), ensureAuth, (req, res) => {
   const { userId } = getAuth(req);
@@ -211,7 +214,6 @@ app.get("/api/student/classes", ensureRole("STUDENT"), ensureAuth, (req, res) =>
   res.json(list);
 });
 
-// optional delete
 app.delete("/api/teacher/classes/:classId", ensureRole("TEACHER"), ensureAuth, (req, res) => {
   const { userId } = getAuth(req);
   const { classId } = req.params;
@@ -220,7 +222,8 @@ app.delete("/api/teacher/classes/:classId", ensureRole("TEACHER"), ensureAuth, (
   if (idx === -1) return res.status(404).json({ message: "Class not found" });
 
   db.classes.splice(idx, 1);
-  // also cleanup sessions/attendance/leaves
+
+  // cleanup sessions/attendance/leaves
   db.sessions = db.sessions.filter((s) => s.classId !== classId);
   db.attendance = db.attendance.filter((a) => a.classId !== classId);
   db.leaves = db.leaves.filter((l) => l.classId !== classId);
@@ -229,8 +232,6 @@ app.delete("/api/teacher/classes/:classId", ensureRole("TEACHER"), ensureAuth, (
 });
 
 // ===================== SESSIONS =====================
-
-// Teacher create session (OPEN)
 app.post("/api/attendance/create-session", ensureRole("TEACHER"), ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
 
@@ -248,11 +249,9 @@ app.post("/api/attendance/create-session", ensureRole("TEACHER"), ensureAuth, (r
   const startTime = Date.now();
   const endTime = startTime + dur * 60 * 1000;
 
-  // ✅ ưu tiên mã GV nhập, rỗng mới random
   let code = normalizeCode(attendanceCode);
   if (!code) code = code5();
 
-  // validate giống frontend
   if (!/^[A-Z0-9]{3,20}$/.test(code)) {
     return res.status(400).json({ message: "Mã điểm danh chỉ gồm chữ/số (3–20 ký tự)." });
   }
@@ -263,12 +262,12 @@ app.post("/api/attendance/create-session", ensureRole("TEACHER"), ensureAuth, (r
     _id: uid(),
     classId: String(classId),
     createdBy: userId,
-    attendanceCode: code,                 // ✅ dùng code đã nhận
+    attendanceCode: code,
     startTime,
     endTime,
     status: "OPEN",
-    period: p,                            // ✅ lưu ca học (nếu cần)
-    lesson: String(lesson || `Ca ${p}`),  // ✅ ưu tiên lesson frontend gửi
+    period: p,
+    lesson: String(lesson || `Ca ${p}`),
     createdAt: Date.now(),
   };
 
@@ -276,8 +275,6 @@ app.post("/api/attendance/create-session", ensureRole("TEACHER"), ensureAuth, (r
   res.json(session);
 });
 
-
-// close session
 app.post("/api/attendance/close-session/:sessionId", ensureRole("TEACHER"), ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
 
@@ -293,7 +290,6 @@ app.post("/api/attendance/close-session/:sessionId", ensureRole("TEACHER"), ensu
   res.json({ ok: true, session: s });
 });
 
-// sessions by class
 app.get("/api/attendance/sessions", ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
 
@@ -308,7 +304,6 @@ app.get("/api/attendance/sessions", ensureAuth, (req, res) => {
   res.json(list);
 });
 
-// active session by class
 app.get("/api/attendance/active-session", ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
 
@@ -319,7 +314,6 @@ app.get("/api/attendance/active-session", ensureAuth, (req, res) => {
   res.json(active);
 });
 
-// list attendees of a session (teacher) - UPDATED
 app.get("/api/attendance/session-attendees", ensureRole("TEACHER"), ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
 
@@ -328,11 +322,7 @@ app.get("/api/attendance/session-attendees", ensureRole("TEACHER"), ensureAuth, 
 
   const list = db.attendance
     .filter((a) => a.sessionId === String(sessionId))
-    .map((a) => ({
-      ...a,
-      // NEW: trường rõ nghĩa để UI hiển thị MSV
-      studentMsv: a.studentId,
-    }));
+    .map((a) => ({ ...a, studentMsv: a.studentId }));
 
   res.json(list);
 });
@@ -341,7 +331,6 @@ app.get("/api/attendance/session-attendees", ensureRole("TEACHER"), ensureAuth, 
 app.post("/api/attendance/check-in", ensureRole("STUDENT"), ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
 
-  // IMPORTANT: userId bây giờ chính là MSV bạn set ở localStorage.userId
   const { userId } = getAuth(req);
   const { sessionId, attendanceCode } = req.body || {};
 
@@ -356,7 +345,6 @@ app.post("/api/attendance/check-in", ensureRole("STUDENT"), ensureAuth, (req, re
   const code = String(attendanceCode).trim().toUpperCase();
   if (code !== s.attendanceCode) return res.status(400).json({ message: "Sai mã điểm danh" });
 
-  // IMPORTANT: check theo MSV (userId)
   const exists = db.attendance.find((a) => a.sessionId === sessionId && a.studentId === userId);
   if (exists) return res.json({ message: "Bạn đã điểm danh rồi", record: exists });
 
@@ -364,7 +352,6 @@ app.post("/api/attendance/check-in", ensureRole("STUDENT"), ensureAuth, (req, re
     _id: uid(),
     sessionId,
     classId: s.classId,
-    // IMPORTANT: studentId = MSV
     studentId: String(userId).trim(),
     checkedAt: Date.now(),
     status: "PRESENT",
@@ -374,7 +361,6 @@ app.post("/api/attendance/check-in", ensureRole("STUDENT"), ensureAuth, (req, re
   res.json({ message: "Điểm danh thành công", record });
 });
 
-// student attendance history by class
 app.get("/api/attendance/my-attendance", ensureRole("STUDENT"), ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
 
@@ -387,67 +373,156 @@ app.get("/api/attendance/my-attendance", ensureRole("STUDENT"), ensureAuth, (req
   res.json(list);
 });
 
-// ===================== LEAVES =====================
+// ===================== LEAVES (IN-MEMORY) =====================
+// STUDENT create leave: mode mới (range) + mode cũ (session)
 app.post("/api/attendance/leave-request", ensureRole("STUDENT"), ensureAuth, (req, res) => {
   autoCloseExpiredSessions();
-
-  // studentId cũng dùng MSV từ header
   const { userId } = getAuth(req);
-  const { sessionId, reason } = req.body || {};
-  if (!sessionId || !reason) return res.status(400).json({ message: "Missing sessionId/reason" });
 
-  const s = db.sessions.find((x) => x._id === sessionId);
-  if (!s) return res.status(404).json({ message: "Session not found" });
+  const {
+    classId = "",
+    sessionId = "",
+    startDate = "",
+    endDate = "",
+    reason = "",
+    studentName = "",
+    studentCode = "",
+    subjectCode = "",
+    subjectName = "",
+  } = req.body || {};
+
+  const r = String(reason || "").trim();
+  if (!r) return res.status(400).json({ message: "reason is required" });
+
+  const cid = String(classId || "").trim();
+  if (!cid) return res.status(400).json({ message: "classId is required" });
+
+  // mode cũ: có sessionId
+  if (String(sessionId || "").trim()) {
+    // optional: verify session exists
+    const s = db.sessions.find((x) => x._id === String(sessionId).trim());
+    // nếu không tìm thấy session vẫn cho tạo đơn (tuỳ bạn). Ở đây: cho tạo nhưng giữ sessionId.
+    const leave = {
+      _id: uid(),
+      classId: cid,
+      sessionId: String(sessionId).trim(),
+      studentId: String(userId).trim(),
+      studentName: String(studentName || "").trim(),
+      studentCode: String(studentCode || "").trim(),
+      subjectCode: String(subjectCode || "").trim() || (s ? "" : ""),
+      subjectName: String(subjectName || "").trim() || (s ? "" : ""),
+      startDate: "",
+      endDate: "",
+      reason: r,
+      status: "PENDING",
+      teacherNote: "",
+      decidedAt: null,
+      decidedBy: "",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    db.leaves.push(leave);
+    return res.json(leave);
+  }
+
+  // mode mới: theo khoảng ngày
+  const sd = String(startDate || "").trim();
+  const ed = String(endDate || "").trim();
+  if (!sd || !ed) return res.status(400).json({ message: "startDate/endDate is required" });
+
+  const ds = parseYmdToMs(sd);
+  const de = parseYmdToMs(ed);
+  if (Number.isNaN(ds) || Number.isNaN(de)) return res.status(400).json({ message: "Invalid date (use YYYY-MM-DD)" });
+  if (ds > de) return res.status(400).json({ message: "startDate must be <= endDate" });
 
   const leave = {
     _id: uid(),
-    classId: s.classId,
-    sessionId: s._id,
-    studentId: String(userId).trim(), // IMPORTANT
-    reason: String(reason),
+    classId: cid,
+    sessionId: "",
+    studentId: String(userId).trim(),
+    studentName: String(studentName || "").trim(),
+    studentCode: String(studentCode || "").trim(),
+    subjectCode: String(subjectCode || "").trim(),
+    subjectName: String(subjectName || "").trim(),
+    startDate: sd,
+    endDate: ed,
+    reason: r,
     status: "PENDING",
+    teacherNote: "",
+    decidedAt: null,
+    decidedBy: "",
     createdAt: Date.now(),
+    updatedAt: Date.now(),
   };
+
   db.leaves.push(leave);
-  res.json({ message: "Gửi đơn xin vắng thành công", leave });
+  return res.json(leave);
 });
 
-app.get("/api/attendance/leave-requests", ensureRole("TEACHER"), ensureAuth, (req, res) => {
-  autoCloseExpiredSessions();
+// STUDENT: view my leaves by class
+app.get("/api/attendance/my-leave-requests", ensureRole("STUDENT"), ensureAuth, (req, res) => {
+  const { userId } = getAuth(req);
+  const classId = String(req.query.classId || "").trim();
+  if (!classId) return res.status(400).json({ message: "classId is required" });
 
-  const { classId, status = "PENDING" } = req.query;
-  if (!classId) return res.status(400).json({ message: "Missing classId" });
-
-  let list = db.leaves.filter((l) => l.classId === String(classId));
-  if (status) list = list.filter((l) => l.status === String(status).toUpperCase());
-  list.sort((a, b) => b.createdAt - a.createdAt);
-
-  // NEW: trả thêm studentMsv cho UI
-  list = list.map((l) => ({ ...l, studentMsv: l.studentId }));
+  const list = db.leaves
+    .filter((l) => l.classId === classId && l.studentId === String(userId).trim())
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
   res.json(list);
 });
 
-app.put("/api/attendance/leave-approve/:leaveId", ensureRole("TEACHER"), ensureAuth, (req, res) => {
-  const { leaveId } = req.params;
-  const lv = db.leaves.find((l) => l._id === leaveId);
+// TEACHER: view leaves by class + filter status
+app.get("/api/attendance/leave-requests", ensureRole("TEACHER"), ensureAuth, (req, res) => {
+  const classId = String(req.query.classId || "").trim();
+  if (!classId) return res.status(400).json({ message: "classId is required" });
+
+  const status = String(req.query.status || "PENDING").toUpperCase();
+  let list = db.leaves.filter((l) => l.classId === classId);
+  if (status !== "ALL") list = list.filter((l) => String(l.status).toUpperCase() === status);
+
+  list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  res.json(list);
+});
+
+// TEACHER: approve
+app.put("/api/attendance/leave-approve/:id", ensureRole("TEACHER"), ensureAuth, (req, res) => {
+  const { userId } = getAuth(req);
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ message: "Missing leave id in URL" });
+
+  const teacherNote = String(req.body?.teacherNote || "").trim();
+  const lv = db.leaves.find((x) => x._id === id);
   if (!lv) return res.status(404).json({ message: "Leave not found" });
 
   lv.status = "APPROVED";
-  lv.approvedAt = Date.now();
-  res.json({ ok: true, leave: lv });
+  lv.teacherNote = teacherNote;
+  lv.decidedAt = new Date();
+  lv.decidedBy = String(userId).trim();
+  lv.updatedAt = Date.now();
+
+  res.json(lv);
 });
 
-app.get("/api/attendance/my-leave-requests", ensureRole("STUDENT"), ensureAuth, (req, res) => {
+// TEACHER: reject
+app.put("/api/attendance/leave-reject/:id", ensureRole("TEACHER"), ensureAuth, (req, res) => {
   const { userId } = getAuth(req);
-  const { classId } = req.query;
-  if (!classId) return res.status(400).json({ message: "Missing classId" });
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ message: "Missing leave id in URL" });
 
-  const list = db.leaves.filter((l) => l.classId === String(classId) && l.studentId === userId);
-  list.sort((a, b) => b.createdAt - a.createdAt);
-  res.json(list);
+  const teacherNote = String(req.body?.teacherNote || "").trim();
+  const lv = db.leaves.find((x) => x._id === id);
+  if (!lv) return res.status(404).json({ message: "Leave not found" });
+
+  lv.status = "REJECTED";
+  lv.teacherNote = teacherNote;
+  lv.decidedAt = new Date();
+  lv.decidedBy = String(userId).trim();
+  lv.updatedAt = Date.now();
+
+  res.json(lv);
 });
 
 // ===================== START =====================
-const PORT = process.env.PORT || 5000; 
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log("Server running on", PORT));

@@ -6,12 +6,31 @@ const router = express.Router();
 const roleOf = (req) => String(req.headers["x-role"] || "").toUpperCase();
 const uidOf = (req) => String(req.headers["x-user-id"] || "").trim();
 
-router.post("/leave-request", async (req, res) => {
+function requireRole(role) {
+  return (req, res, next) => {
+    const r = roleOf(req);
+    const uid = uidOf(req);
+    if (!uid) return res.status(401).json({ message: "Missing x-user-id" });
+    if (r !== role) return res.status(403).json({ message: `Only ${role} can access` });
+    next();
+  };
+}
+
+function mustHaveId(req, res, next) {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ message: "Missing leave id in URL" });
+  next();
+}
+
+// =========================
+// STUDENT: Create leave
+// =========================
+// Hỗ trợ 2 mode:
+// - Mode mới: { classId, startDate, endDate, reason, ... }
+// - Mode cũ: { classId, sessionId, reason, ... } (vẫn yêu cầu classId để GV lọc theo lớp)
+router.post("/leave-request", requireRole("STUDENT"), async (req, res) => {
   try {
-    const role = roleOf(req);
     const studentId = uidOf(req);
-    if (!studentId) return res.status(401).json({ message: "Missing x-user-id" });
-    if (role !== "STUDENT") return res.status(403).json({ message: "Only STUDENT can create leave request" });
 
     const {
       sessionId = "",
@@ -28,14 +47,16 @@ router.post("/leave-request", async (req, res) => {
     const r = String(reason || "").trim();
     if (!r) return res.status(400).json({ message: "reason is required" });
 
-    // ✅ mode cũ (nếu bạn vẫn muốn giữ)
-    if (sessionId) {
-      const cid = String(classId || "").trim();
-      if (!cid) return res.status(400).json({ message: "classId is required" });
+    const cid = String(classId || "").trim();
+    if (!cid) return res.status(400).json({ message: "classId is required" });
 
+    const sid = String(sessionId || "").trim();
+
+    // mode cũ: có sessionId (không bắt buộc start/end)
+    if (sid) {
       const doc = await LeaveRequest.create({
         classId: cid,
-        sessionId: String(sessionId),
+        sessionId: sid,
         studentId,
         studentName,
         studentCode,
@@ -47,10 +68,7 @@ router.post("/leave-request", async (req, res) => {
       return res.json(doc);
     }
 
-    // ✅ mode mới (HƯỚNG B): không cần sessionId
-    const cid = String(classId || "").trim();
-    if (!cid) return res.status(400).json({ message: "classId is required" });
-
+    // mode mới: theo khoảng ngày
     const s = String(startDate || "").trim();
     const e = String(endDate || "").trim();
     if (!s || !e) return res.status(400).json({ message: "startDate/endDate is required" });
@@ -80,13 +98,12 @@ router.post("/leave-request", async (req, res) => {
   }
 });
 
-router.get("/my-leave-requests", async (req, res) => {
+// =========================
+// STUDENT: View my leaves
+// =========================
+router.get("/my-leave-requests", requireRole("STUDENT"), async (req, res) => {
   try {
-    const role = roleOf(req);
     const studentId = uidOf(req);
-    if (!studentId) return res.status(401).json({ message: "Missing x-user-id" });
-    if (role !== "STUDENT") return res.status(403).json({ message: "Only STUDENT can view own requests" });
-
     const classId = String(req.query.classId || "").trim();
     if (!classId) return res.status(400).json({ message: "classId is required" });
 
@@ -97,11 +114,11 @@ router.get("/my-leave-requests", async (req, res) => {
   }
 });
 
-router.get("/leave-requests", async (req, res) => {
+// =========================
+// TEACHER: View leaves by class
+// =========================
+router.get("/leave-requests", requireRole("TEACHER"), async (req, res) => {
   try {
-    const role = roleOf(req);
-    if (role !== "TEACHER") return res.status(403).json({ message: "Only TEACHER can view requests" });
-
     const classId = String(req.query.classId || "").trim();
     if (!classId) return res.status(400).json({ message: "classId is required" });
 
@@ -116,12 +133,12 @@ router.get("/leave-requests", async (req, res) => {
   }
 });
 
-router.put("/leave-approve/:id", async (req, res) => {
+// =========================
+// TEACHER: Approve / Reject
+// =========================
+router.put("/leave-approve/:id", requireRole("TEACHER"), mustHaveId, async (req, res) => {
   try {
-    const role = roleOf(req);
     const teacherId = uidOf(req);
-    if (role !== "TEACHER") return res.status(403).json({ message: "Only TEACHER can approve" });
-
     const teacherNote = String(req.body?.teacherNote || "").trim();
 
     const doc = await LeaveRequest.findByIdAndUpdate(
@@ -129,6 +146,7 @@ router.put("/leave-approve/:id", async (req, res) => {
       { status: "APPROVED", teacherNote, decidedAt: new Date(), decidedBy: teacherId },
       { new: true }
     );
+
     if (!doc) return res.status(404).json({ message: "Leave not found" });
     return res.json(doc);
   } catch (e) {
@@ -136,12 +154,9 @@ router.put("/leave-approve/:id", async (req, res) => {
   }
 });
 
-router.put("/leave-reject/:id", async (req, res) => {
+router.put("/leave-reject/:id", requireRole("TEACHER"), mustHaveId, async (req, res) => {
   try {
-    const role = roleOf(req);
     const teacherId = uidOf(req);
-    if (role !== "TEACHER") return res.status(403).json({ message: "Only TEACHER can reject" });
-
     const teacherNote = String(req.body?.teacherNote || "").trim();
 
     const doc = await LeaveRequest.findByIdAndUpdate(
@@ -149,6 +164,7 @@ router.put("/leave-reject/:id", async (req, res) => {
       { status: "REJECTED", teacherNote, decidedAt: new Date(), decidedBy: teacherId },
       { new: true }
     );
+
     if (!doc) return res.status(404).json({ message: "Leave not found" });
     return res.json(doc);
   } catch (e) {

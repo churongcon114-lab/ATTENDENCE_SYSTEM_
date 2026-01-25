@@ -6,9 +6,9 @@
 
 ## Frontend (Vite + React)
 ```bash
-cd frontend
-npm install
+npm run install:all
 npm run dev
+
 
 #docker
 docker build -t attendance-fe .

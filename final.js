@@ -19,13 +19,15 @@ app.use((req, res, next) => {
 
 // Model: AttendanceSession 
 const AttendanceSession = mongoose.model("AttendanceSession", new mongoose.Schema({
-    classId: { type: String, required: true },
-    lesson: { type: String, required: true },
-    attendanceCode: { type: String, required: true },
-    startTime: { type: Date, required: true },
-    endTime: { type: Date, required: true },
-    isClosed: { type: Boolean, default: false }
+  classId: { type: String, required: true },
+  lesson: { type: String, required: true },
+  attendanceCode: { type: String, required: true },
+  startTime: { type: Date, required: true },
+  endTime: { type: Date, required: true },
+  isClosed: { type: Boolean, default: false },
+  createdBy: { type: String, required: true } 
 }, { timestamps: true }));
+
 
 // Model: AttendanceRecord 
 const attendanceRecordSchema = new mongoose.Schema({
@@ -204,6 +206,30 @@ const closeSession = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+// ✅ Teacher xem danh sách đơn xin vắng theo classId
+app.get("/api/attendance/leave-requests", async (req, res) => {
+  try {
+    if (req.user.role !== "TEACHER") {
+      return res.status(403).json({ message: "Only teacher can view leave requests" });
+    }
+
+    const { classId, status = "PENDING" } = req.query;
+    if (!classId) return res.status(400).json({ message: "Missing classId" });
+
+    // populate session để lọc theo classId
+    const leaves = await LeaveRequest.find({ status })
+      .populate("sessionId")
+      .sort({ createdAt: -1 });
+
+    const filtered = leaves.filter(
+      (lv) => lv.sessionId && lv.sessionId.classId === classId
+    );
+
+    res.json(filtered);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 
 // 3. ROUTES 
